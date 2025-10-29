@@ -16,7 +16,9 @@
 package com.alibaba.cloud.ai.graph;
 
 import com.alibaba.cloud.ai.graph.internal.node.ParallelNode;
+import com.alibaba.cloud.ai.graph.store.Store;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -35,6 +37,9 @@ import static java.util.Optional.ofNullable;
  */
 public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder> {
 
+	public static final String HUMAN_FEEDBACK_METADATA_KEY = "HUMAN_FEEDBACK";
+	public static final String STATE_UPDATE_METADATA_KEY = "STATE_UPDATE";
+
 	private final String threadId;
 
 	private final String checkPointId;
@@ -45,7 +50,13 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 
 	private final Map<String, Object> metadata;
 
+	private Store store;
+
 	private final Map<String, Object> interruptedNodes;
+
+	public Store store() {
+		return this.store;
+	}
 
 	/**
 	 * Returns the stream mode of the compiled graph.
@@ -165,6 +176,13 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 		return ofNullable(interruptedNodes).map(m -> m.get(key));
 	}
 
+
+	// FIXME, allow modification or not?
+	@Override
+	public Optional<Map<String, Object>> metadata() {
+		return Optional.of(Collections.unmodifiableMap(metadata));
+	}
+
 	/**
 	 * return metadata value for key
 	 * @param key given metadata key
@@ -208,6 +226,8 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 
 		private String nextNode;
 
+		private Store store;
+
 		private CompiledGraph.StreamMode streamMode = CompiledGraph.StreamMode.VALUES;
 
 		/**
@@ -229,6 +249,7 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 			this.checkPointId = config.checkPointId;
 			this.nextNode = config.nextNode;
 			this.streamMode = config.streamMode;
+			this.store = config.store;
 		}
 
 		/**
@@ -273,6 +294,14 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 			return this;
 		}
 
+		public Builder addHumanFeedback(Map<String, Object> humanFeedback) {
+			return addMetadata(HUMAN_FEEDBACK_METADATA_KEY, humanFeedback);
+		}
+
+		public Builder addStateUpdate(Map<String, Object> stateUpdate) {
+			return addMetadata(STATE_UPDATE_METADATA_KEY, stateUpdate);
+		}
+
 		/**
 		 * Adds a custom {@link Executor} for a specific parallel node.
 		 * <p>
@@ -286,6 +315,10 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 		 */
 		public Builder addParallelNodeExecutor(String nodeId, Executor executor) {
 			return addMetadata(ParallelNode.formatNodeId(nodeId), requireNonNull(executor, "executor cannot be null!"));
+		}
+
+		public void store(Store store) {
+			this.store = store;
 		}
 
 		/**
@@ -310,6 +343,7 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 		this.streamMode = builder.streamMode;
 		this.metadata = ofNullable(builder.metadata()).map(Map::copyOf).orElse(null);
 		this.interruptedNodes = new ConcurrentHashMap<>();
+		this.store = builder.store;
 	}
 
 	@Override

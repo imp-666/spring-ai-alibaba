@@ -161,10 +161,10 @@ public class OverAllStateBuilder {
 
 	/**
 	 * Constructs and returns a fully configured OverAllState instance.
-	 * @return A new OverAllState instance with the configured settings
+	 * @return A new OverAllState instance with the configured settingsken
 	 */
 	public OverAllState build() {
-		OverAllState state = new OverAllState(new HashMap<>(data), new HashMap<>(keyStrategies), resume, store);
+		OverAllState state = new OverAllState(new HashMap<>(data), new HashMap<>(keyStrategies), store);
 		// If no input key is registered, apply the default key and replace strategy
 		if (!state.containStrategy(OverAllState.DEFAULT_INPUT_KEY)) {
 			state.registerKeyAndStrategy(OverAllState.DEFAULT_INPUT_KEY, new ReplaceStrategy());
