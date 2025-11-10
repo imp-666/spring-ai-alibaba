@@ -54,14 +54,6 @@
 
         <dependency>
             <groupId>io.github.a2asdk</groupId>
-            <artifactId>a2a-java-reference-server</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.github.a2asdk</groupId>
-            <artifactId>a2a-java-sdk-server-common</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.github.a2asdk</groupId>
             <artifactId>a2a-java-sdk-client</artifactId>
         </dependency>
         <dependency>
@@ -106,7 +98,6 @@
         <dependency>
             <groupId>com.alibaba.cloud.ai</groupId>
             <artifactId>spring-ai-alibaba-starter-dashscope</artifactId>
-            <version>${spring-ai-extensions.version}</version>
             <scope>test</scope>
         </dependency>
 
