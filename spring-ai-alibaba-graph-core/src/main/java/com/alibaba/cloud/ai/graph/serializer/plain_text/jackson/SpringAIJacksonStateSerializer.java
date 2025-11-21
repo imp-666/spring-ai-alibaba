@@ -21,6 +21,7 @@ import com.alibaba.cloud.ai.graph.state.AgentStateFactory;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -34,7 +35,8 @@ import com.fasterxml.jackson.databind.module.SimpleModule;
 
 import com.alibaba.cloud.ai.graph.serializer.AgentInstructionMessage;
 
-import java.io.IOException;
+import java.util.Collection;
+import java.util.Map;
 
 public class SpringAIJacksonStateSerializer extends JacksonStateSerializer {
 
@@ -43,9 +45,7 @@ public class SpringAIJacksonStateSerializer extends JacksonStateSerializer {
 
 		var module = new SimpleModule();
 
-		ChatMessageSerializer.registerTo(module);
-		ChatMessageDeserializer.registerTo(module);
-        NodeOutputDeserializer.registerTo(module);
+		registerMessageHandlers(module);
 
 		typeMapper.register(new TypeMapper.Reference<ToolResponseMessage>(MessageType.TOOL.name()) {
 		}).register(new TypeMapper.Reference<SystemMessage>(MessageType.SYSTEM.name()) {
@@ -55,13 +55,46 @@ public class SpringAIJacksonStateSerializer extends JacksonStateSerializer {
 		}).register(new TypeMapper.Reference<AgentInstructionMessage>("TEMPLATED_USER") {
 		});
 
+		// Conditionally register DeepSeekAssistantMessage if the class is available
+		registerDeepSeekSupportIfAvailable(module);
+
 		objectMapper.registerModule(module);
 
-        objectMapper.activateDefaultTyping(
-                LaissezFaireSubTypeValidator.instance,
-                ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY
-        );
+		ObjectMapper.DefaultTypeResolverBuilder typeResolver = new ObjectMapper.DefaultTypeResolverBuilder(
+				ObjectMapper.DefaultTyping.NON_FINAL, LaissezFaireSubTypeValidator.instance) {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public boolean useForType(JavaType t) {
+				if (t.isTypeOrSubTypeOf(Map.class) || t.isMapLikeType() || t.isCollectionLikeType()
+						|| t.isTypeOrSubTypeOf(Collection.class) || t.isArrayType()) {
+					return false;
+				}
+				return super.useForType(t);
+			}
+		};
+		typeResolver = (ObjectMapper.DefaultTypeResolverBuilder) typeResolver.init(JsonTypeInfo.Id.CLASS, null);
+		typeResolver = (ObjectMapper.DefaultTypeResolverBuilder) typeResolver.inclusion(JsonTypeInfo.As.PROPERTY);
+		typeResolver = (ObjectMapper.DefaultTypeResolverBuilder) typeResolver.typeProperty("@class");
+		objectMapper.setDefaultTyping(typeResolver);
+	}
+
+	/**
+	 * Conditionally registers DeepSeekAssistantMessage support if the class is
+	 * available on the classpath.
+	 * This avoids forcing a dependency on DeepSeek-related JARs.
+	 */
+	private void registerDeepSeekSupportIfAvailable(SimpleModule module) {
+		try {
+			Class.forName("org.springframework.ai.deepseek.DeepSeekAssistantMessage");
+			// Class is available, register the type mapper
+			// TypeMapper only needs the type name, not the actual class
+			typeMapper.register(new TypeMapper.Reference<Object>("DEEPSEEK_ASSISTANT") {
+			});
+		} catch (ClassNotFoundException e) {
+			// DeepSeekAssistantMessage is not available, skip registration
+			// This is expected for projects that don't include DeepSeek dependencies
+		}
 	}
 
 	interface ChatMessageDeserializer {
@@ -82,14 +115,50 @@ public class SpringAIJacksonStateSerializer extends JacksonStateSerializer {
 
 		static void registerTo(SimpleModule module) {
 			module.addDeserializer(ToolResponseMessage.class, tool)
-				.addDeserializer(SystemMessage.class, system)
-				.addDeserializer(UserMessage.class, user)
-				.addDeserializer(AssistantMessage.class, ai)
-				.addDeserializer(Document.class, document)
-				.addDeserializer(AgentInstructionMessage.class, templatedUser)
-				.addDeserializer(StreamingOutput.class, streamingOutput);
+					.addDeserializer(SystemMessage.class, system)
+					.addDeserializer(UserMessage.class, user)
+					.addDeserializer(AssistantMessage.class, ai)
+					.addDeserializer(Document.class, document)
+					.addDeserializer(AgentInstructionMessage.class, templatedUser)
+					.addDeserializer(StreamingOutput.class, streamingOutput);
+
+			// Conditionally register DeepSeekAssistantMessage deserializer if available
+			registerDeepSeekDeserializerIfAvailable(module);
 		}
 
+		/**
+		 * Conditionally registers DeepSeekAssistantMessage deserializer if the class is
+		 * available.
+		 */
+		@SuppressWarnings("unchecked")
+		static void registerDeepSeekDeserializerIfAvailable(SimpleModule module) {
+			try {
+				Class<?> deepSeekClass = Class.forName("org.springframework.ai.deepseek.DeepSeekAssistantMessage");
+				DeepSeekAssistantMessageHandler.Deserializer deepSeekAi = new DeepSeekAssistantMessageHandler.Deserializer();
+				// Use raw type to avoid type inference issues
+				module.addDeserializer((Class<Object>) deepSeekClass,
+						(com.fasterxml.jackson.databind.JsonDeserializer<? extends Object>) deepSeekAi);
+			} catch (ClassNotFoundException | IllegalStateException e) {
+				// DeepSeekAssistantMessage is not available, skip registration
+				// IllegalStateException may be thrown if the class is found but constructor
+				// fails
+			}
+		}
+
+	}
+
+	/**
+	 * Registers all Spring AI Message handlers (serializers and deserializers) to
+	 * the provided Jackson module.
+	 * This allows other components (like CheckpointSavers) to reuse the same
+	 * serialization logic.
+	 *
+	 * @param module the Jackson SimpleModule to register handlers to
+	 */
+	public static void registerMessageHandlers(SimpleModule module) {
+		ChatMessageSerializer.registerTo(module);
+		ChatMessageDeserializer.registerTo(module);
+		NodeOutputDeserializer.registerTo(module);
 	}
 
 	interface ChatMessageSerializer {
@@ -112,39 +181,46 @@ public class SpringAIJacksonStateSerializer extends JacksonStateSerializer {
 
 		static void registerTo(SimpleModule module) {
 			module.addSerializer(ToolResponseMessage.class, tool)
-				.addSerializer(SystemMessage.class, system)
-				.addSerializer(UserMessage.class, user)
-				.addSerializer(AssistantMessage.class, ai)
-				.addSerializer(Document.class, document)
-				.addSerializer(AgentInstructionMessage.class, templatedUser)
-				.addSerializer(NodeOutput.class, output)
-				.addSerializer(StreamingOutput.class, streamingOutput);
+					.addSerializer(SystemMessage.class, system)
+					.addSerializer(UserMessage.class, user)
+					.addSerializer(AssistantMessage.class, ai)
+					.addSerializer(Document.class, document)
+					.addSerializer(AgentInstructionMessage.class, templatedUser)
+					.addSerializer(NodeOutput.class, output)
+					.addSerializer(StreamingOutput.class, streamingOutput);
 
+			// Conditionally register DeepSeekAssistantMessage serializer if available
+			registerDeepSeekSerializerIfAvailable(module);
+		}
+
+		/**
+		 * Conditionally registers DeepSeekAssistantMessage serializer if the class is
+		 * available.
+		 */
+		@SuppressWarnings("unchecked")
+		static void registerDeepSeekSerializerIfAvailable(SimpleModule module) {
+			try {
+				Class<?> deepSeekClass = Class.forName("org.springframework.ai.deepseek.DeepSeekAssistantMessage");
+				DeepSeekAssistantMessageHandler.Serializer deepSeekAi = new DeepSeekAssistantMessageHandler.Serializer();
+				// Use raw type to avoid type inference issues
+				module.addSerializer((Class<Object>) deepSeekClass,
+						(com.fasterxml.jackson.databind.JsonSerializer<Object>) deepSeekAi);
+			} catch (ClassNotFoundException | IllegalStateException e) {
+				// DeepSeekAssistantMessage is not available, skip registration
+				// IllegalStateException may be thrown if the class is found but constructor
+				// fails
+			}
 		}
 
 	}
 
-    interface NodeOutputDeserializer {
+	interface NodeOutputDeserializer {
 
-        JacksonNodeOutputDeserializer nodeOutput = new JacksonNodeOutputDeserializer();
+		JacksonNodeOutputDeserializer nodeOutput = new JacksonNodeOutputDeserializer();
 
-        static void registerTo(SimpleModule module) {
-            module.addDeserializer(NodeOutput.class, nodeOutput);
-        }
-    }
-
-    @Override
-    public OverAllState cloneObject(OverAllState object) throws IOException {
-        return bytesToObject(objectToBytes(object), object.getClass());
-    }
-
-    @Override
-    public byte[] objectToBytes(OverAllState object) throws IOException {
-        return objectMapper.writeValueAsBytes(object);
-    }
-
-    private OverAllState bytesToObject(byte[] bytes, Class<? extends OverAllState> clz) throws IOException {
-        return objectMapper.readValue(bytes, clz);
-    }
+		static void registerTo(SimpleModule module) {
+			module.addDeserializer(NodeOutput.class, nodeOutput);
+		}
+	}
 
 }
