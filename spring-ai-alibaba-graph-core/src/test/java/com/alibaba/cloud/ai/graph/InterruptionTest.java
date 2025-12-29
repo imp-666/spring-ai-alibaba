@@ -42,7 +42,7 @@ public class InterruptionTest {
 
 	@Test
 	public void interruptAfterEdgeEvaluation() throws Exception {
-		var saver = new MemorySaver();
+		var saver = MemorySaver.builder().build();
 		KeyStrategyFactory keyStrategyFactory = new KeyStrategyFactoryBuilder().defaultStrategy(KeyStrategy.REPLACE)
 			.addStrategy("messages")
 			.build();
@@ -50,7 +50,7 @@ public class InterruptionTest {
 			.addNode("B", _nodeAction("B"))
 			.addNode("C", _nodeAction("C"))
 			.addNode("D", _nodeAction("D"))
-			.addConditionalEdges("B", edge_async(state -> {
+			.addConditionalEdges("B", edge_async((state, config) -> {
 				var message = state.value("messages").orElse(END);
 				return message.equals("B") ? "D" : message.toString();
 			}), EdgeMappings.builder().to("A").to("C").to("D").toEND().build())
@@ -112,14 +112,14 @@ public class InterruptionTest {
 	@Test
 	public void interruptBeforeEdgeEvaluation() throws Exception {
 
-		var saver = new MemorySaver();
+		var saver = MemorySaver.builder().build();
 		KeyStrategyFactory keyStrategyFactory = new KeyStrategyFactoryBuilder().defaultStrategy(KeyStrategy.REPLACE)
 			.addStrategy("messages")
 			.build();
 		var workflow = new StateGraph(keyStrategyFactory).addNode("A", _nodeAction("A"))
 			.addNode("B", _nodeAction("B"))
 			.addNode("C", _nodeAction("C"))
-			.addConditionalEdges("B", edge_async(state -> state.value("messages").orElse(END).toString()),
+			.addConditionalEdges("B", edge_async((state, config) -> state.value("messages").orElse(END).toString()),
 					EdgeMappings.builder().to("A").to("C").toEND().build())
 			.addEdge(START, "A")
 			.addEdge("A", "B")

@@ -25,6 +25,8 @@ import com.alibaba.cloud.ai.graph.checkpoint.savers.VersionedMemorySaver;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.alibaba.cloud.ai.graph.state.strategy.AppendStrategy;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -33,21 +35,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.logging.LogManager;
 
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 import static com.alibaba.cloud.ai.graph.StateGraph.START;
 import static com.alibaba.cloud.ai.graph.action.AsyncEdgeAction.edge_async;
 import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
 import static java.lang.String.format;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertIterableEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class StateGraphMemorySaverTest {
 
@@ -75,7 +68,7 @@ public class StateGraphMemorySaverTest {
 	// Simulate LLM agent
 	NodeAction tool_whether = state -> Map.of("messages", "temperature in Napoli is 30 degree");
 
-	EdgeAction shouldContinue_whether = state -> {
+	EdgeAction shouldContinue_whether = (state, config) -> {
 		List<String> messages = (List<String>) state.value("messages").get();
 		return messages.get(messages.size() - 1).equals("tool_calls") ? "tools" : END;
 	};
@@ -106,7 +99,7 @@ public class StateGraphMemorySaverTest {
 			.addEdge(START, "agent_1")
 			.addEdge("agent_1", END);
 
-		var saver = new MemorySaver();
+		var saver = MemorySaver.builder().build();
 
 		var compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder()
@@ -179,7 +172,7 @@ public class StateGraphMemorySaverTest {
 			return Map.of("steps", steps, "messages", format("agent_1:step %d", steps));
 		};
 
-		EdgeAction shouldContinue = state -> {
+		EdgeAction shouldContinue = (state, config) -> {
 			Integer steps = (Integer) state.value("steps").get();
 			if (steps >= expectedSteps) {
 				return "exit";
@@ -191,7 +184,7 @@ public class StateGraphMemorySaverTest {
 			.addNode("agent_1", node_async(agent_1))
 			.addConditionalEdges("agent_1", edge_async(shouldContinue), Map.of("next", "agent_1", "exit", END));
 
-		var saver = new VersionedMemorySaver();
+		var saver = VersionedMemorySaver.builder().build();
 
 		var compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder()
@@ -265,7 +258,7 @@ public class StateGraphMemorySaverTest {
 			.addConditionalEdges("agent", edge_async(shouldContinue_whether), Map.of("tools", "tools", END, END))
 			.addEdge("tools", "agent");
 
-		var saver = new MemorySaver();
+		var saver = MemorySaver.builder().build();
 
 		var compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder()
@@ -355,7 +348,7 @@ public class StateGraphMemorySaverTest {
 			.addConditionalEdges("agent", edge_async(shouldContinue_whether), Map.of("tools", "tools", END, END))
 			.addEdge("tools", "agent");
 
-		var saver = new MemorySaver();
+		var saver = MemorySaver.builder().build();
 
 		var compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder().register(saver).build())
@@ -406,7 +399,7 @@ public class StateGraphMemorySaverTest {
 
 		var threadId = "thread_1";
 
-		var saver = new VersionedMemorySaver();
+		var saver = VersionedMemorySaver.builder().build();
 
 		// Check for error
 		var configWithVersion = RunnableConfig.builder().threadId(threadId).build();

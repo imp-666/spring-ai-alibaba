@@ -52,7 +52,9 @@ public class LoopGraphBuildingStrategy implements FlowGraphBuildingStrategy {
     @Override
     public StateGraph buildGraph(FlowGraphBuilder.FlowGraphConfig config) throws GraphStateException {
         validateConfig(config);
-        StateGraph graph = new StateGraph(config.getName(), config.getKeyStrategyFactory());
+        StateGraph graph = config.getStateSerializer() != null
+                ? new StateGraph(config.getName(), config.getKeyStrategyFactory(), config.getStateSerializer())
+                : new StateGraph(config.getName(), config.getKeyStrategyFactory());
         Agent rootAgent = config.getRootAgent();
 
         // Add root transparent node
@@ -72,7 +74,7 @@ public class LoopGraphBuildingStrategy implements FlowGraphBuildingStrategy {
         Agent subAgent = config.getSubAgents().get(0);
         graph.addNode(subAgent.name(), subAgent.getGraph());
         graph.addConditionalEdges(loopStrategy.loopDispatchNodeName(), edge_async(
-                state -> {
+                (state, runnableConfig) -> {
                     Boolean value = state.value(loopStrategy.loopFlagKey(), false);
                     return value ? "continue" : "break";
                 }

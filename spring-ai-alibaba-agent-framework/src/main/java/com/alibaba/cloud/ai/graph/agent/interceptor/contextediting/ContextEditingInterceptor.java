@@ -126,26 +126,26 @@ public class ContextEditingInterceptor extends ModelInterceptor {
 								resp.id(), resp.name(), placeholder));
 					}
 
-					updatedMessages.add(new ToolResponseMessage(clearedResponses, toolMsg.getMetadata()));
+					updatedMessages.add(ToolResponseMessage.builder()
+						.responses(clearedResponses)
+						.metadata(toolMsg.getMetadata())
+						.build());
 				}
-				else if (msg instanceof AssistantMessage) {
-					AssistantMessage assistantMsg = (AssistantMessage) msg;
+				else if (msg instanceof AssistantMessage assistantMsg) {
 					List<AssistantMessage.ToolCall> clearedToolCalls = new ArrayList<>();
 
 					// Clear tool call arguments by replacing with placeholder
-					if (assistantMsg.getToolCalls() != null) {
-						for (AssistantMessage.ToolCall toolCall : assistantMsg.getToolCalls()) {
-							clearedToolCalls.add(new AssistantMessage.ToolCall(
-									toolCall.id(), toolCall.type(), toolCall.name(), placeholder));
-						}
+					for (AssistantMessage.ToolCall toolCall : assistantMsg.getToolCalls()) {
+						clearedToolCalls.add(new AssistantMessage.ToolCall(
+								toolCall.id(), toolCall.type(), toolCall.name(), placeholder));
 					}
 
 					// Create new AssistantMessage with cleared tool calls
-					AssistantMessage clearedAssistantMsg = new AssistantMessage(
-							assistantMsg.getText(),
-							assistantMsg.getMetadata(),
-							clearedToolCalls
-					);
+					AssistantMessage clearedAssistantMsg = AssistantMessage.builder()
+						.content(assistantMsg.getText())
+						.properties(assistantMsg.getMetadata())
+						.toolCalls(clearedToolCalls)
+						.build();
 					updatedMessages.add(clearedAssistantMsg);
 				}
 			}

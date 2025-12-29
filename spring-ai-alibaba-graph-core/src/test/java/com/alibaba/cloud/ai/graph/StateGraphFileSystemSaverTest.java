@@ -18,7 +18,7 @@ package com.alibaba.cloud.ai.graph;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
-import com.alibaba.cloud.ai.graph.checkpoint.savers.FileSystemSaver;
+import com.alibaba.cloud.ai.graph.checkpoint.savers.file.FileSystemSaver;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 
 import java.nio.file.Paths;
@@ -67,7 +67,7 @@ public class StateGraphFileSystemSaverTest {
 				log.info("agent_1: step: {}", steps);
 				return Map.of("steps", steps, "messages", format("agent_1:step %d", steps));
 			}))
-			.addConditionalEdges("agent_1", edge_async(state -> {
+			.addConditionalEdges("agent_1", edge_async((state, config) -> {
 				int steps = (int) state.data().get("steps");
 				if (steps >= expectedSteps) {
 					return "exit";
@@ -75,8 +75,10 @@ public class StateGraphFileSystemSaverTest {
 				return "next";
 			}), Map.of("next", "agent_1", "exit", END));
 
-		var saver = new FileSystemSaver(Paths.get(rootPath, "testCheckpointSaverResubmit"),
-				workflow.getStateSerializer());
+		var saver = FileSystemSaver.builder()
+				.targetFolder(Paths.get(rootPath, "testCheckpointSaverResubmit"))
+				.stateSerializer(workflow.getStateSerializer())
+				.build();
 
 		CompileConfig compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder()
@@ -163,7 +165,7 @@ public class StateGraphFileSystemSaverTest {
 				log.info("agent_1: step: {}", steps);
 				return Map.of("steps", steps, "messages", format("agent_1:step %d", steps));
 			}))
-			.addConditionalEdges("agent_1", edge_async(state -> {
+			.addConditionalEdges("agent_1", edge_async((state, config) -> {
 				int steps = (int) state.data().get("steps");
 				if (steps >= expectedSteps) {
 					return "exit";
@@ -171,8 +173,10 @@ public class StateGraphFileSystemSaverTest {
 				return "next";
 			}), Map.of("next", "agent_1", "exit", END));
 
-		var saver = new FileSystemSaver(Paths.get(rootPath, "testCheckpointSaverWithManualRelease"),
-				workflow.getStateSerializer());
+		var saver = FileSystemSaver.builder()
+				.targetFolder(Paths.get(rootPath, "testCheckpointSaverWithManualRelease"))
+				.stateSerializer(workflow.getStateSerializer())
+				.build();
 
 		CompileConfig compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder()
@@ -260,7 +264,7 @@ public class StateGraphFileSystemSaverTest {
 				log.info("agent_1: step: {}", steps);
 				return Map.of("steps", steps, "messages", format("agent_1:step %d", steps));
 			}))
-			.addConditionalEdges("agent_1", edge_async(state -> {
+			.addConditionalEdges("agent_1", edge_async((state, config) -> {
 				int steps = (int) state.data().get("steps");
 				if (steps >= expectedSteps) {
 					return "exit";
@@ -268,8 +272,10 @@ public class StateGraphFileSystemSaverTest {
 				return "next";
 			}), Map.of("next", "agent_1", "exit", END));
 
-		var saver = new FileSystemSaver(Paths.get(rootPath, "testCheckpointSaverWithAutoRelease"),
-				workflow.getStateSerializer());
+		var saver = FileSystemSaver.builder()
+				.targetFolder(Paths.get(rootPath, "testCheckpointSaverWithAutoRelease"))
+				.stateSerializer(workflow.getStateSerializer())
+				.build();
 
 		CompileConfig compileConfig = CompileConfig.builder()
 			.saverConfig(SaverConfig.builder()

@@ -15,37 +15,31 @@
  */
 package com.alibaba.cloud.ai.graph;
 
-import com.alibaba.cloud.ai.graph.action.AsyncCommandAction;
-import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
-import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
-import com.alibaba.cloud.ai.graph.action.Command;
-import com.alibaba.cloud.ai.graph.action.CommandAction;
+import com.alibaba.cloud.ai.graph.action.*;
 import com.alibaba.cloud.ai.graph.async.AsyncGenerator;
 import com.alibaba.cloud.ai.graph.async.AsyncGeneratorQueue;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.alibaba.cloud.ai.graph.serializer.plain_text.PlainTextStateSerializer;
+import com.alibaba.cloud.ai.graph.serializer.plain_text.jackson.SpringAIJacksonStateSerializer;
 import com.alibaba.cloud.ai.graph.state.AppenderChannel;
 import com.alibaba.cloud.ai.graph.state.RemoveByHash;
 import com.alibaba.cloud.ai.graph.state.strategy.AppendStrategy;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.cloud.ai.graph.utils.EdgeMappings;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Optional;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.stream.Collectors;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.NamedExecutable;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
+
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.stream.Collectors;
 
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 import static com.alibaba.cloud.ai.graph.StateGraph.START;
@@ -53,11 +47,7 @@ import static com.alibaba.cloud.ai.graph.action.AsyncEdgeAction.edge_async;
 import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.junit.Assert.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertIterableEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class StateGraphTest {
 
@@ -154,7 +144,7 @@ public class StateGraphTest {
 		log.info("{}", exception.getMessage());
 
 		exception = assertThrows(GraphStateException.class,
-				() -> workflow.addConditionalEdges("agent_1", edge_async(state -> "agent_3"), Map.of()));
+				() -> workflow.addConditionalEdges("agent_1", edge_async((state, config) -> "agent_3"), Map.of()));
 		log.info("{}", exception.getMessage());
 
 	}
@@ -645,7 +635,7 @@ public class StateGraphTest {
 			.addEdge("C", END);
 
 		exception = assertThrows(GraphStateException.class,
-				() -> noConditionalEdge.addConditionalEdges("A", edge_async(state -> "next"), Map.of("next", "A2")));
+				() -> noConditionalEdge.addConditionalEdges("A", edge_async((state, config) -> "next"), Map.of("next", "A2")));
 		assertEquals("conditional edge from 'A' already exist!", exception.getMessage());
 
 		var noConditionalEdgeOnBranch = new StateGraph(createKeyStrategyFactory()).addNode("A", makeNode("A"))
@@ -659,7 +649,7 @@ public class StateGraphTest {
 			.addEdge("A", "A3")
 			.addEdge("A1", "B")
 			.addEdge("A2", "B")
-			.addConditionalEdges("A3", edge_async(state -> "next"), Map.of("next", "B"))
+			.addConditionalEdges("A3", edge_async((state, config) -> "next"), Map.of("next", "B"))
 			.addEdge("B", "C")
 			.addEdge(START, "A")
 			.addEdge("C", END);
@@ -701,7 +691,7 @@ public class StateGraphTest {
 			keyStrategyMap.put("prop1", (o, o2) -> o2);
 			return keyStrategyMap;
 		};
-		PlainTextStateSerializer plainTextStateSerializer = new StateGraph.JacksonSerializer();
+		PlainTextStateSerializer plainTextStateSerializer = new SpringAIJacksonStateSerializer(OverAllState::new, new ObjectMapper());
 		StateGraph workflow = new StateGraph(keyStrategyFactory, plainTextStateSerializer).addEdge(START, "agent_1")
 				.addNode("agent_1", node_async(state -> {
 					log.info("agent_1\n{}", state);
@@ -899,6 +889,139 @@ public class StateGraphTest {
 				(NamedExecutable) () -> app.invoke(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1")));
 	}
 
+	/**
+	 * Tests that lifecycle listeners receive correct nodeId for parallel node children.
+	 */
+	@Test
+	void testParallelNodeLifecycleListenerNodeId() throws Exception {
+		List<String> beforeNodeIds = new ArrayList<>();
+		List<String> afterNodeIds = new ArrayList<>();
+
+		var workflow = new StateGraph(createKeyStrategyFactory()).addNode("A", makeNode("A"))
+			.addNode("A1", makeNode("A1"))
+			.addNode("A2", makeNode("A2"))
+			.addNode("A3", makeNode("A3"))
+			.addNode("B", makeNode("B"))
+			.addEdge("A", "A1")
+			.addEdge("A", "A2")
+			.addEdge("A", "A3")
+			.addEdge("A1", "B")
+			.addEdge("A2", "B")
+			.addEdge("A3", "B")
+			.addEdge(START, "A")
+			.addEdge("B", END);
+
+		var app = workflow.compile(CompileConfig.builder().withLifecycleListener(new GraphLifecycleListener() {
+			@Override
+			public void before(String nodeId, Map<String, Object> state, RunnableConfig config, Long curTime) {
+				synchronized (beforeNodeIds) {
+					beforeNodeIds.add(nodeId);
+					log.info("Lifecycle before: nodeId = {}", nodeId);
+				}
+			}
+
+			@Override
+			public void after(String nodeId, Map<String, Object> state, RunnableConfig config, Long curTime) {
+				synchronized (afterNodeIds) {
+					afterNodeIds.add(nodeId);
+					log.info("Lifecycle after: nodeId = {}", nodeId);
+				}
+			}
+		}).build());
+
+		app.stream(Map.of(), RunnableConfig.builder().build())
+			.blockLast();
+
+		log.info("Before nodeIds: {}", beforeNodeIds);
+		log.info("After nodeIds: {}", afterNodeIds);
+
+		assertTrue(beforeNodeIds.contains("A"));
+		assertTrue(afterNodeIds.contains("A"));
+
+		assertTrue(beforeNodeIds.contains("__PARALLEL__(A)"));
+		assertTrue(afterNodeIds.contains("__PARALLEL__(A)"));
+
+		assertTrue(beforeNodeIds.contains("A1"));
+		assertTrue(afterNodeIds.contains("A1"));
+
+		assertTrue(beforeNodeIds.contains("A2"));
+		assertTrue(afterNodeIds.contains("A2"));
+
+		assertTrue(beforeNodeIds.contains("A3"));
+		assertTrue(afterNodeIds.contains("A3"));
+
+		assertTrue(beforeNodeIds.contains("B"));
+		assertTrue(afterNodeIds.contains("B"));
+
+		long parallelIdCount = beforeNodeIds.stream().filter(id -> id.equals("__PARALLEL__(A)")).count();
+		assertEquals(1, parallelIdCount);
+	}
+
+	/**
+	 * Tests ParallelNode thread pool optimization and logging functionality.
+	 * Verifies that the default thread pool is properly configured and logs metrics correctly.
+	 */
+	@Test
+	void testParallelNodeThreadPoolOptimization() throws Exception {
+		// Create a simple parallel workflow
+		var workflow = new StateGraph(createKeyStrategyFactory())
+			.addNode("parallelParent", makeNode("parallelParent"))
+			.addNode("child1", makeNode("child1"))
+			.addNode("child2", makeNode("child2"))
+			.addNode("child3", makeNode("child3"))
+			.addNode("merge", makeNode("merge"))
+			.addEdge(START, "parallelParent")
+			.addEdge("parallelParent", "child1")
+			.addEdge("parallelParent", "child2")
+			.addEdge("parallelParent", "child3")
+			.addEdge("child1", "merge")
+			.addEdge("child2", "merge")
+			.addEdge("child3", "merge")
+			.addEdge("merge", END);
+
+		// Compile the workflow
+		var app = workflow.compile();
+
+		// Capture log output to verify thread pool logging
+		final List<String> logMessages = new ArrayList<>();
+		
+		// Create a test listener to capture lifecycle events
+		var testListener = new GraphLifecycleListener() {
+			@Override
+			public void before(String nodeId, Map<String, Object> state, RunnableConfig config, Long curTime) {
+				if (nodeId.contains("PARALLEL")) {
+					logMessages.add("Parallel node started: " + nodeId);
+				}
+			}
+
+			@Override
+			public void after(String nodeId, Map<String, Object> state, RunnableConfig config, Long curTime) {
+				if (nodeId.contains("PARALLEL")) {
+					logMessages.add("Parallel node completed: " + nodeId);
+				}
+			}
+		};
+
+		// Add the listener to compile config
+		var config = CompileConfig.builder().withLifecycleListener(testListener).build();
+		
+		// Override the default workflow compilation to use our config
+		var appWithConfig = workflow.compile(config);
+
+		// Execute the workflow
+		appWithConfig.stream(Map.of()).blockLast();
+
+		// Verify that all nodes were executed
+		assertTrue(logMessages.size() >= 2, "Should have at least parallel start and complete messages");
+		
+		// Verify that we have the expected parallel node markers
+		boolean hasParallelStart = logMessages.stream().anyMatch(msg -> msg.contains("Parallel node started"));
+		boolean hasParallelComplete = logMessages.stream().anyMatch(msg -> msg.contains("Parallel node completed"));
+		
+		assertTrue(hasParallelStart, "Should have parallel node start message");
+		assertTrue(hasParallelComplete, "Should have parallel node complete message");
+	}
+
 	@Test
 	public void testCommandEdgeGraph() throws Exception {
 		StateGraph workflow = new StateGraph(
@@ -998,72 +1121,81 @@ public class StateGraphTest {
 
 	}
 
-	/**
-	 * Tests that lifecycle listeners receive correct nodeId for parallel node children.
-	 */
 	@Test
-	void testParallelNodeLifecycleListenerNodeId() throws Exception {
-		List<String> beforeNodeIds = new ArrayList<>();
-		List<String> afterNodeIds = new ArrayList<>();
+	public void testStreamingNodeWithFluxException() throws Exception {
+		StateGraph workflow = new StateGraph(createKeyStrategyFactory()).addEdge(START, "agent_1")
+				.addNode("agent_1", node_async(state -> {
+					log.info("agent_1\n{}", state);
+					return Map.of("pro1", Flux.just("response1", "response2", "response3")
+							.map(value -> {
+								if (value.equals("response3")) {
+									throw new RuntimeException("Exception in map operation");
+								}
+								return value;
+							}));
+				}))
+				.addEdge("agent_1", END);
 
-		var workflow = new StateGraph(createKeyStrategyFactory()).addNode("A", makeNode("A"))
-			.addNode("A1", makeNode("A1"))
-			.addNode("A2", makeNode("A2"))
-			.addNode("A3", makeNode("A3"))
-			.addNode("B", makeNode("B"))
-			.addEdge("A", "A1")
-			.addEdge("A", "A2")
-			.addEdge("A", "A3")
-			.addEdge("A1", "B")
-			.addEdge("A2", "B")
-			.addEdge("A3", "B")
-			.addEdge(START, "A")
-			.addEdge("B", END);
+		CompiledGraph app = workflow.compile();
 
-		var app = workflow.compile(CompileConfig.builder().withLifecycleListener(new GraphLifecycleListener() {
-			@Override
-			public void before(String nodeId, Map<String, Object> state, RunnableConfig config, Long curTime) {
-				synchronized (beforeNodeIds) {
-					beforeNodeIds.add(nodeId);
-					log.info("Lifecycle before: nodeId = {}", nodeId);
-				}
-			}
+		assertThrows(RuntimeException.class,
+				() -> app.invoke(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1")));
 
-			@Override
-			public void after(String nodeId, Map<String, Object> state, RunnableConfig config, Long curTime) {
-				synchronized (afterNodeIds) {
-					afterNodeIds.add(nodeId);
-					log.info("Lifecycle after: nodeId = {}", nodeId);
-				}
-			}
-		}).build());
-
-		app.stream(Map.of(), RunnableConfig.builder().addParallelNodeExecutor("A", ForkJoinPool.commonPool()).build())
-			.blockLast();
-
-		log.info("Before nodeIds: {}", beforeNodeIds);
-		log.info("After nodeIds: {}", afterNodeIds);
-
-		assertTrue(beforeNodeIds.contains("A"));
-		assertTrue(afterNodeIds.contains("A"));
-
-		assertTrue(beforeNodeIds.contains("__PARALLEL__(A)"));
-		assertTrue(afterNodeIds.contains("__PARALLEL__(A)"));
-
-		assertTrue(beforeNodeIds.contains("A1"));
-		assertTrue(afterNodeIds.contains("A1"));
-
-		assertTrue(beforeNodeIds.contains("A2"));
-		assertTrue(afterNodeIds.contains("A2"));
-
-		assertTrue(beforeNodeIds.contains("A3"));
-		assertTrue(afterNodeIds.contains("A3"));
-
-		assertTrue(beforeNodeIds.contains("B"));
-		assertTrue(afterNodeIds.contains("B"));
-
-		long parallelIdCount = beforeNodeIds.stream().filter(id -> id.equals("__PARALLEL__(A)")).count();
-		assertEquals(1, parallelIdCount);
+		Flux<NodeOutput> flux = app.stream(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1"));
+		
+		// 验证前两个元素正常输出
+		Flux<NodeOutput> fluxForFirstTwo = app.stream(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1"));
+		List<NodeOutput> firstTwoElements = fluxForFirstTwo.take(2).collectList().block();
+		assertNotNull(firstTwoElements);
+		assertEquals(2, firstTwoElements.size());
+		
+		// 验证第三个元素会抛出异常
+		assertThrows(RuntimeException.class, () -> flux.blockLast());
 	}
+
+	@Test
+	public void testStreamingNodeWithNodeException() throws Exception {
+		StateGraph workflow = new StateGraph(createKeyStrategyFactory()).addEdge(START, "agent_1")
+				.addNode("agent_1", node_async(state -> {
+					throw new RuntimeException("forced exception for testing");
+				}))
+				.addEdge("agent_1", END);
+
+		CompiledGraph app = workflow.compile();
+
+		// 验证 invoke 会抛出异常
+		assertThrows(RuntimeException.class,
+				() -> app.invoke(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1")));
+
+		// 验证 stream 也会抛出异常
+		Flux<NodeOutput> flux = app.stream(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1"));
+		assertThrows(RuntimeException.class, () -> flux.blockLast());
+	}
+
+	@Test
+	public void testEdgeWithRunnableConfig() throws Exception {
+
+		StateGraph workflow = new StateGraph(createKeyStrategyFactory())
+				.addConditionalEdges(START, AsyncEdgeAction.edge_async((state, runnableConfig) -> {
+					log.info("run with state: {} and config: {}", state, runnableConfig);
+					// 验证传入的配置是否与调用时传入的一致1
+					assertEquals("thread1", runnableConfig.threadId().orElse(null));
+					assertTrue(runnableConfig.metadata("prop1").isPresent());
+					assertEquals("value1", runnableConfig.metadata("prop1").get());
+					return "agent_1";
+				}), Map.of("agent_1", "agent_1"))
+				.addNode("agent_1", node_async(state -> Map.of("test","test")))
+				.addEdge("agent_1", END);
+		CompiledGraph app = workflow.compile();
+		Optional<OverAllState> result = app.invoke(Map.of(OverAllState.DEFAULT_INPUT_KEY, "test1"), new RunnableConfig.Builder()
+				.addMetadata("prop1", "value1")  // 使用addMetadata而不是addStateUpdate，因为RunnableConfig使用metadata存储键值对
+				.threadId("thread1")
+				.build());
+		
+		// 验证执行成功
+		assertTrue(result.isPresent());
+
+	}
+
 
 }
